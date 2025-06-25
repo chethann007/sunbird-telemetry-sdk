@@ -1,0 +1,203 @@
+name: Build and Release Telemetry SDK
+
+# Trigger workflow on tag pushes (e.g., v1.0.0, release-1.2.3)
+on:
+  push:
+    #tags:
+      #- '*'
+    
+jobs:
+  # First job: Build and test the SDK
+  # This job builds the telemetry SDK, runs tests, and uploads artifacts
+  build-and-test-sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: js
+    outputs:
+      # Output the npm cache key for potential use by other jobs
+      npm-cache-key: ${{ steps.cache-npm.outputs.cache-primary-key }}
+    steps:
+      # Step 1: Checkout the source code from the tag
+      - uses: actions/checkout@v3
+
+      # Step 2: Set up Node.js environment for building
+      # Uses Node.js 16 which is stable and well-supported
+      - name: Set up Node.js 16
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+          cache: 'npm'
+          cache-dependency-path: 'js/package-lock.json'
+
+      # Step 3: Cache npm dependencies to speed up builds
+      # This caches the node_modules directory between workflow runs
+      - name: Cache npm packages
+        id: cache-npm
+        uses: actions/cache@v3
+        with:
+          path: js/node_modules
+          key: ${{ runner.os }}-npm-${{ hashFiles('js/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      # Step 4: Install dependencies
+      - name: Install dependencies
+        run: npm ci
+
+      # Step 5: Build the SDK
+      # This creates the bundled telemetry SDK in the dist directory
+      - name: Build Telemetry SDK
+        run: npm run build
+
+      # Step 6: Run tests with Chrome Headless
+      # Install Chrome and run tests since PhantomJS has issues
+      - name: Install Chrome for testing
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+
+      - name: Run tests
+        run: npm test
+
+      # Step 7: Upload built SDK as artifact
+      # This makes the built SDK available for the Docker job
+      - name: Upload SDK build artifacts
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: telemetry-sdk-dist
+          path: js/dist/
+          retention-days: 7
+
+      # Step 8: Upload npm dependencies as artifact for potential reuse
+      - name: Upload node_modules
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: node-modules
+          path: js/node_modules/
+          retention-days: 1
+
+  # Second job: Create release package and optionally build Docker image
+  create-release-package:
+    needs: build-and-test-sdk
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: Checkout the source code (needed for release context)
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Step 2: Download the built SDK from the first job
+      - name: Download SDK build artifacts
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name: telemetry-sdk-dist
+          path: js/dist/
+
+      # Step 3: Create release package
+      # Package the SDK with documentation and examples
+      - name: Create release package
+        run: |
+          # Create release directory
+          mkdir -p release-package
+          
+          # Copy built SDK
+          cp -r js/dist/* release-package/
+          
+          # Copy documentation
+          cp js/README.md release-package/
+          cp LICENSE release-package/
+          
+          # Create package info
+          echo "Sunbird Telemetry SDK" > release-package/VERSION.txt
+          echo "Tag: ${{ github.ref_name }}" >> release-package/VERSION.txt
+          echo "Commit: ${{ github.sha }}" >> release-package/VERSION.txt
+          echo "Build Date: $(date -u)" >> release-package/VERSION.txt
+          
+          # Create tarball for release
+          tar -czf sunbird-telemetry-sdk-${{ github.ref_name }}.tar.gz -C release-package .
+
+      # Step 4: Create GitHub release
+      # Upload the release package to GitHub releases
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            sunbird-telemetry-sdk-${{ github.ref_name }}.tar.gz
+            js/dist/index.js
+          body: |
+            ## Sunbird Telemetry SDK Release ${{ github.ref_name }}
+            
+            ### What's included:
+            - `index.js` - Bundled Telemetry SDK ready for use
+            - `package.json` - Package metadata
+            - `README.md` - Documentation
+            
+            ### Usage:
+            1. Download `index.js`
+            2. Include it in your web application
+            3. Follow the documentation in README.md
+            
+            ### Changes:
+            Built from commit: ${{ github.sha }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Optional: Build and push Docker image
+  # Uncomment and configure this job if you want to create a Docker image
+  build-and-push-docker:
+    needs: build-and-test-sdk
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+  
+      - name: Download SDK build artifacts
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name: telemetry-sdk-dist
+          path: js/dist/
+  
+      # Step: Authenticate with Docker registry
+      - name: Login Docker Registry
+        run: |        
+          case "${{ vars.REGISTRY_PROVIDER }}" in
+          "gcp")
+            echo "${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}" | base64 --decode > $HOME/gcloud-key.json
+            gcloud auth activate-service-account --key-file=$HOME/gcloud-key.json
+            gcloud auth configure-docker ${{ secrets.REGISTRY_NAME }}
+            REGISTRY_URL=$(echo "${{ secrets.REGISTRY_URL }}" | tr '[:upper:]' '[:lower:]') 
+            ;;
+          "azure" | "dockerhub")
+            echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login "${{ secrets.REGISTRY_NAME }}" \
+            --username "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+            REGISTRY_URL="$(echo "${{ secrets.REGISTRY_URL }}/$(basename "${{ github.workspace }}")" | tr '[:upper:]' '[:lower:]')"
+            ;;
+          *)
+            REPO_NAME_LOWERCASE=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            REGISTRY_URL="ghcr.io/$REPO_NAME_LOWERCASE"
+            ;;
+            esac
+            echo "REGISTRY_URL=${REGISTRY_URL}" >> $GITHUB_ENV
+  
+      - name: Build Docker Image
+        run: |
+          IMAGE_TAG=$(echo "${{ github.ref_name }}_$(echo $GITHUB_SHA | cut -c1-7)" | tr '[:upper:]' '[:lower:]')
+          
+          # Create Dockerfile for serving the SDK
+          cat > Dockerfile << 'EOF'
+          FROM nginx:alpine
+          COPY js/dist/ /usr/share/nginx/html/
+          COPY js/README.md /usr/share/nginx/html/
+          EXPOSE 80
+          EOF
+          
+          docker build -t ${REGISTRY_URL}:${IMAGE_TAG} .
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
+  
+      - name: Push Docker Image
+        run: |
+          docker push ${REGISTRY_URL}:${IMAGE_TAG}
+          echo "Successfully built and pushed Docker image: ${REGISTRY_URL}:${IMAGE_TAG}" 
