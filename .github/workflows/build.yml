@@ -4,7 +4,7 @@ name: Build and Release Telemetry SDK
 on:
   push:
     #tags:
-     # - '*'
+      #- '*'
     
 jobs:
   # First job: Build and test the SDK
@@ -139,11 +139,17 @@ jobs:
             
             # Update plugins array to include chrome launcher
             sed -i 's/"karma-phantomjs-launcher"/"karma-chrome-launcher"/g' karma.renderer.config.js
-            sed -i 's/'\''PhantomJS'\''/'\''ChromeHeadless'\''/g' karma.renderer.config.js
+            sed -i 's/'\''PhantomJS'\''/'\''Chrome'\''/g' karma.renderer.config.js
+            
+            # Add Chrome custom launcher configuration for headless mode
+            sed -i '/browsers: \['\''Chrome'\''\],/a\        customLaunchers: {\n            ChromeHeadless: {\n                base: "Chrome",\n                flags: [\n                    "--headless",\n                    "--disable-gpu",\n                    "--no-sandbox",\n                    "--disable-dev-shm-usage"\n                ]\n            }\n        },' karma.renderer.config.js
+            
+            # Update browsers to use the custom launcher
+            sed -i 's/browsers: \['\''Chrome'\''\]/browsers: \['\''ChromeHeadless'\''\]/g' karma.renderer.config.js
             
             # Verify the changes
             echo "Updated Karma config:"
-            grep -A 5 -B 5 "plugins\|browsers" karma.renderer.config.js
+            grep -A 15 -B 5 "plugins\|browsers\|customLaunchers" karma.renderer.config.js
             
             # Run tests with Chrome
             if npm test; then
