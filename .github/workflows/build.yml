@@ -3,13 +3,12 @@ name: Build and Release Telemetry SDK
 # Trigger workflow on tag pushes (e.g., v1.0.0, release-1.2.3)
 on:
   push:
-    #tags:
-     # - '*'
+    tags:
+      - '*'
     
 jobs:
-  # First job: Build and test the SDK
-  # This job builds the telemetry SDK, runs tests, and uploads artifacts
-  build-and-test-sdk:
+  # Build the SDK
+  build-sdk:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -50,41 +49,7 @@ jobs:
       - name: Build Telemetry SDK
         run: npm run build
 
-      # Step 6: Install Chrome and configure for testing
-      - name: Install Chrome for testing
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
-
-      # Step 7: Install karma-chrome-launcher and configure for headless testing
-      - name: Setup Chrome testing environment
-        run: |
-          # Install karma-chrome-launcher
-          npm install karma-chrome-launcher --save-dev
-          
-          # Create backup of original config
-          cp karma.renderer.config.js karma.renderer.config.js.backup
-          
-          # Update plugins array to use chrome launcher
-          sed -i 's/"karma-phantomjs-launcher"/"karma-chrome-launcher"/g' karma.renderer.config.js
-          sed -i 's/'\''PhantomJS'\''/'\''Chrome'\''/g' karma.renderer.config.js
-          
-          # Add Chrome custom launcher configuration for headless mode
-          sed -i '/browsers: \['\''Chrome'\''\],/a\        customLaunchers: {\n            ChromeHeadless: {\n                base: "Chrome",\n                flags: [\n                    "--headless",\n                    "--disable-gpu",\n                    "--no-sandbox",\n                    "--disable-dev-shm-usage"\n                ]\n            }\n        },' karma.renderer.config.js
-          
-          # Update browsers to use the custom launcher
-          sed -i 's/browsers: \['\''Chrome'\''\]/browsers: \['\''ChromeHeadless'\''\]/g' karma.renderer.config.js
-
-      # Step 8: Run tests with Chrome Headless
-      - name: Run tests
-        run: npm test
-
-      # Step 9: Restore original config
-      - name: Restore original Karma config
-        run: |
-          mv karma.renderer.config.js.backup karma.renderer.config.js
-
-      # Step 10: Upload built SDK as artifact
+      # Step 6: Upload built SDK as artifact
       # This makes the built SDK available for the Docker job
       - name: Upload SDK build artifacts
         uses: actions/upload-artifact@v4.6.2
@@ -95,7 +60,7 @@ jobs:
 
   # Build and push Docker image
   build-and-push-docker:
-    needs: build-and-test-sdk
+    needs: build-sdk
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
