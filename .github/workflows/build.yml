@@ -3,8 +3,8 @@ name: Build and Release Telemetry SDK
 # Trigger workflow on tag pushes (e.g., v1.0.0, release-1.2.3)
 on:
   push:
-    #tags:
-      #- '*'
+    tags:
+      - '*'
     
 jobs:
   # First job: Build and test the SDK
@@ -54,25 +54,63 @@ jobs:
       # Install OpenSSL 1.1 compatibility libraries for PhantomJS
       - name: Fix PhantomJS OpenSSL compatibility
         run: |
-          # Install OpenSSL 1.1 compatibility libraries
-          sudo apt-get update
-          sudo apt-get install -y libssl1.1
+          # Try multiple approaches to fix PhantomJS OpenSSL issues
+          echo "Attempting to fix PhantomJS OpenSSL compatibility..."
           
-          # Alternative: Try to install from Ubuntu 20.04 repository if available
+          # Method 1: Try to install libssl1.1 from Ubuntu repositories
+          sudo apt-get update
+          sudo apt-get install -y libssl1.1 || echo "libssl1.1 not available in current Ubuntu version"
+          
+          # Method 2: Download and install libssl1.1 from Ubuntu 20.04
           if ! dpkg -l | grep -q libssl1.1; then
-            echo "Installing OpenSSL 1.1 from Ubuntu 20.04 repository..."
+            echo "Downloading OpenSSL 1.1 from Ubuntu 20.04..."
             wget -q http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.20_amd64.deb || \
             wget -q http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.20_amd64.deb || \
+            wget -q http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.19_amd64.deb || \
             echo "Could not download OpenSSL 1.1 package"
             
-            if [ -f libssl1.1_1.1.1f-1ubuntu2.20_amd64.deb ]; then
-              sudo dpkg -i libssl1.1_1.1.1f-1ubuntu2.20_amd64.deb || echo "OpenSSL 1.1 installation failed, continuing..."
+            if [ -f libssl1.1_*.deb ]; then
+              sudo dpkg -i libssl1.1_*.deb || echo "OpenSSL 1.1 installation failed"
+              sudo apt-get install -f -y || echo "Dependency fix failed"
             fi
           fi
           
-          # Set environment variables to help PhantomJS find libraries
-          export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+          # Method 3: Try to install from Ubuntu 18.04 if still not available
+          if ! dpkg -l | grep -q libssl1.1; then
+            echo "Trying Ubuntu 18.04 OpenSSL 1.1..."
+            wget -q http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1-1ubuntu2.1~18.04.23_amd64.deb || \
+            wget -q http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1-1ubuntu2.1~18.04.23_amd64.deb || \
+            echo "Could not download Ubuntu 18.04 OpenSSL 1.1"
+            
+            if [ -f libssl1.1_*.deb ]; then
+              sudo dpkg -i libssl1.1_*.deb || echo "Ubuntu 18.04 OpenSSL 1.1 installation failed"
+              sudo apt-get install -f -y || echo "Dependency fix failed"
+            fi
+          fi
+          
+          # Method 4: Set environment variables to help PhantomJS find existing libraries
+          export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/usr/lib:$LD_LIBRARY_PATH"
           echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          
+          # Method 5: Create symlinks if needed
+          if [ -f /usr/lib/x86_64-linux-gnu/libssl.so.3 ] && [ ! -f /usr/lib/x86_64-linux-gnu/libssl.so.1.1 ]; then
+            echo "Creating symlink for libssl compatibility..."
+            sudo ln -sf /usr/lib/x86_64-linux-gnu/libssl.so.3 /usr/lib/x86_64-linux-gnu/libssl.so.1.1 || echo "Symlink creation failed"
+          fi
+          
+          if [ -f /usr/lib/x86_64-linux-gnu/libcrypto.so.3 ] && [ ! -f /usr/lib/x86_64-linux-gnu/libcrypto.so.1.1 ]; then
+            echo "Creating symlink for libcrypto compatibility..."
+            sudo ln -sf /usr/lib/x86_64-linux-gnu/libcrypto.so.3 /usr/lib/x86_64-linux-gnu/libcrypto.so.1.1 || echo "Symlink creation failed"
+          fi
+          
+          # Method 6: Try to install PhantomJS with specific OpenSSL version
+          echo "Checking PhantomJS installation..."
+          npm list karma-phantomjs-launcher || echo "PhantomJS launcher not found"
+          
+          # Show current OpenSSL libraries
+          echo "Current OpenSSL libraries:"
+          ls -la /usr/lib/x86_64-linux-gnu/libssl* || echo "No libssl found"
+          ls -la /usr/lib/x86_64-linux-gnu/libcrypto* || echo "No libcrypto found"
 
       - name: Run tests with PhantomJS
         run: npm test
