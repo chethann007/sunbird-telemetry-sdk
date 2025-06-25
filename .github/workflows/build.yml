@@ -50,14 +50,31 @@ jobs:
       - name: Build Telemetry SDK
         run: npm run build
 
-      # Step 6: Run tests with Chrome Headless
-      # Install Chrome and run tests since PhantomJS has issues
-      - name: Install Chrome for testing
+      # Step 6: Fix PhantomJS OpenSSL issues and run tests
+      # Install OpenSSL 1.1 compatibility libraries for PhantomJS
+      - name: Fix PhantomJS OpenSSL compatibility
         run: |
+          # Install OpenSSL 1.1 compatibility libraries
           sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
+          sudo apt-get install -y libssl1.1
+          
+          # Alternative: Try to install from Ubuntu 20.04 repository if available
+          if ! dpkg -l | grep -q libssl1.1; then
+            echo "Installing OpenSSL 1.1 from Ubuntu 20.04 repository..."
+            wget -q http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.20_amd64.deb || \
+            wget -q http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.20_amd64.deb || \
+            echo "Could not download OpenSSL 1.1 package"
+            
+            if [ -f libssl1.1_1.1.1f-1ubuntu2.20_amd64.deb ]; then
+              sudo dpkg -i libssl1.1_1.1.1f-1ubuntu2.20_amd64.deb || echo "OpenSSL 1.1 installation failed, continuing..."
+            fi
+          fi
+          
+          # Set environment variables to help PhantomJS find libraries
+          export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
-      - name: Run tests
+      - name: Run tests with PhantomJS
         run: npm test
 
       # Step 7: Upload built SDK as artifact
