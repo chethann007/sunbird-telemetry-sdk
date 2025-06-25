@@ -3,8 +3,8 @@ name: Build and Release Telemetry SDK
 # Trigger workflow on tag pushes (e.g., v1.0.0, release-1.2.3)
 on:
   push:
-    #tags:
-      #- '*'
+    tags:
+      - '*'
     
 jobs:
   # First job: Build and test the SDK
@@ -50,122 +50,41 @@ jobs:
       - name: Build Telemetry SDK
         run: npm run build
 
-      # Step 6: Fix PhantomJS OpenSSL issues and run tests
-      # Install OpenSSL 1.1 compatibility libraries for PhantomJS
-      - name: Fix PhantomJS OpenSSL compatibility
+      # Step 6: Install Chrome and configure for testing
+      - name: Install Chrome for testing
         run: |
-          # Try multiple approaches to fix PhantomJS OpenSSL issues
-          echo "Attempting to fix PhantomJS OpenSSL compatibility..."
-          
-          # Check Ubuntu version
-          UBUNTU_VERSION=$(lsb_release -rs)
-          echo "Running on Ubuntu $UBUNTU_VERSION"
-          
-          # Method 1: Try to install libssl1.1 from Ubuntu repositories
           sudo apt-get update
-          sudo apt-get install -y libssl1.1 || echo "libssl1.1 not available in current Ubuntu version"
-          
-          # Method 2: Download and install libssl1.1 from Ubuntu 20.04
-          if ! dpkg -l | grep -q libssl1.1; then
-            echo "Downloading OpenSSL 1.1 from Ubuntu 20.04..."
-            wget -q http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.20_amd64.deb || \
-            wget -q http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.20_amd64.deb || \
-            wget -q http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.19_amd64.deb || \
-            echo "Could not download OpenSSL 1.1 package"
-            
-            if [ -f libssl1.1_*.deb ]; then
-              sudo dpkg -i libssl1.1_*.deb || echo "OpenSSL 1.1 installation failed"
-              sudo apt-get install -f -y || echo "Dependency fix failed"
-            fi
-          fi
-          
-          # Method 3: Try to install from Ubuntu 18.04 if still not available
-          if ! dpkg -l | grep -q libssl1.1; then
-            echo "Trying Ubuntu 18.04 OpenSSL 1.1..."
-            wget -q http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1-1ubuntu2.1~18.04.23_amd64.deb || \
-            wget -q http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1-1ubuntu2.1~18.04.23_amd64.deb || \
-            echo "Could not download Ubuntu 18.04 OpenSSL 1.1"
-            
-            if [ -f libssl1.1_*.deb ]; then
-              sudo dpkg -i libssl1.1_*.deb || echo "Ubuntu 18.04 OpenSSL 1.1 installation failed"
-              sudo apt-get install -f -y || echo "Dependency fix failed"
-            fi
-          fi
-          
-          # Method 4: Set environment variables to help PhantomJS find existing libraries
-          export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/usr/lib:$LD_LIBRARY_PATH"
-          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> $GITHUB_ENV
-          
-          # Method 5: Create symlinks if needed
-          if [ -f /usr/lib/x86_64-linux-gnu/libssl.so.3 ] && [ ! -f /usr/lib/x86_64-linux-gnu/libssl.so.1.1 ]; then
-            echo "Creating symlink for libssl compatibility..."
-            sudo ln -sf /usr/lib/x86_64-linux-gnu/libssl.so.3 /usr/lib/x86_64-linux-gnu/libssl.so.1.1 || echo "Symlink creation failed"
-          fi
-          
-          if [ -f /usr/lib/x86_64-linux-gnu/libcrypto.so.3 ] && [ ! -f /usr/lib/x86_64-linux-gnu/libcrypto.so.1.1 ]; then
-            echo "Creating symlink for libcrypto compatibility..."
-            sudo ln -sf /usr/lib/x86_64-linux-gnu/libcrypto.so.3 /usr/lib/x86_64-linux-gnu/libcrypto.so.1.1 || echo "Symlink creation failed"
-          fi
-          
-          # Method 6: Try to install PhantomJS with specific OpenSSL version
-          echo "Checking PhantomJS installation..."
-          npm list karma-phantomjs-launcher || echo "PhantomJS launcher not found"
-          
-          # Show current OpenSSL libraries
-          echo "Current OpenSSL libraries:"
-          ls -la /usr/lib/x86_64-linux-gnu/libssl* || echo "No libssl found"
-          ls -la /usr/lib/x86_64-linux-gnu/libcrypto* || echo "No libcrypto found"
+          sudo apt-get install -y google-chrome-stable
 
-      # Step 7: Try PhantomJS first, fallback to Chrome if it fails
-      - name: Run tests with PhantomJS (with fallback)
+      # Step 7: Install karma-chrome-launcher and configure for headless testing
+      - name: Setup Chrome testing environment
         run: |
-          # Try PhantomJS first
-          echo "Attempting to run tests with PhantomJS..."
-          if npm test; then
-            echo "PhantomJS tests completed successfully!"
-          else
-            echo "PhantomJS failed, trying Chrome Headless as fallback..."
-            
-            # Install Chrome
-            sudo apt-get update
-            sudo apt-get install -y google-chrome-stable
-            
-            # Ensure karma-chrome-launcher is available
-            echo "Installing karma-chrome-launcher..."
-            npm install karma-chrome-launcher --save-dev
-            
-            # Temporarily modify Karma config to use Chrome
-            cp karma.renderer.config.js karma.renderer.config.js.backup
-            
-            # Update plugins array to include chrome launcher
-            sed -i 's/"karma-phantomjs-launcher"/"karma-chrome-launcher"/g' karma.renderer.config.js
-            sed -i 's/'\''PhantomJS'\''/'\''Chrome'\''/g' karma.renderer.config.js
-            
-            # Add Chrome custom launcher configuration for headless mode
-            sed -i '/browsers: \['\''Chrome'\''\],/a\        customLaunchers: {\n            ChromeHeadless: {\n                base: "Chrome",\n                flags: [\n                    "--headless",\n                    "--disable-gpu",\n                    "--no-sandbox",\n                    "--disable-dev-shm-usage"\n                ]\n            }\n        },' karma.renderer.config.js
-            
-            # Update browsers to use the custom launcher
-            sed -i 's/browsers: \['\''Chrome'\''\]/browsers: \['\''ChromeHeadless'\''\]/g' karma.renderer.config.js
-            
-            # Verify the changes
-            echo "Updated Karma config:"
-            grep -A 15 -B 5 "plugins\|browsers\|customLaunchers" karma.renderer.config.js
-            
-            # Run tests with Chrome
-            if npm test; then
-              echo "Chrome Headless tests completed successfully!"
-            else
-              echo "Both PhantomJS and Chrome failed!"
-              echo "Restoring original config and exiting..."
-              mv karma.renderer.config.js.backup karma.renderer.config.js
-              exit 1
-            fi
-            
-            # Restore original config
-            mv karma.renderer.config.js.backup karma.renderer.config.js
-          fi
+          # Install karma-chrome-launcher
+          npm install karma-chrome-launcher --save-dev
+          
+          # Create backup of original config
+          cp karma.renderer.config.js karma.renderer.config.js.backup
+          
+          # Update plugins array to use chrome launcher
+          sed -i 's/"karma-phantomjs-launcher"/"karma-chrome-launcher"/g' karma.renderer.config.js
+          sed -i 's/'\''PhantomJS'\''/'\''Chrome'\''/g' karma.renderer.config.js
+          
+          # Add Chrome custom launcher configuration for headless mode
+          sed -i '/browsers: \['\''Chrome'\''\],/a\        customLaunchers: {\n            ChromeHeadless: {\n                base: "Chrome",\n                flags: [\n                    "--headless",\n                    "--disable-gpu",\n                    "--no-sandbox",\n                    "--disable-dev-shm-usage"\n                ]\n            }\n        },' karma.renderer.config.js
+          
+          # Update browsers to use the custom launcher
+          sed -i 's/browsers: \['\''Chrome'\''\]/browsers: \['\''ChromeHeadless'\''\]/g' karma.renderer.config.js
 
-      # Step 8: Upload built SDK as artifact
+      # Step 8: Run tests with Chrome Headless
+      - name: Run tests
+        run: npm test
+
+      # Step 9: Restore original config
+      - name: Restore original Karma config
+        run: |
+          mv karma.renderer.config.js.backup karma.renderer.config.js
+
+      # Step 10: Upload built SDK as artifact
       # This makes the built SDK available for the Docker job
       - name: Upload SDK build artifacts
         uses: actions/upload-artifact@v4.6.2
@@ -174,83 +93,7 @@ jobs:
           path: js/dist/
           retention-days: 7
 
-      # Step 9: Upload npm dependencies as artifact for potential reuse
-      - name: Upload node_modules
-        uses: actions/upload-artifact@v4.6.2
-        with:
-          name: node-modules
-          path: js/node_modules/
-          retention-days: 1
-
-  # Second job: Create release package and optionally build Docker image
-  create-release-package:
-    needs: build-and-test-sdk
-    runs-on: ubuntu-latest
-    steps:
-      # Step 1: Checkout the source code (needed for release context)
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      # Step 2: Download the built SDK from the first job
-      - name: Download SDK build artifacts
-        uses: actions/download-artifact@v4.3.0
-        with:
-          name: telemetry-sdk-dist
-          path: js/dist/
-
-      # Step 3: Create release package
-      # Package the SDK with documentation and examples
-      - name: Create release package
-        run: |
-          # Create release directory
-          mkdir -p release-package
-          
-          # Copy built SDK
-          cp -r js/dist/* release-package/
-          
-          # Copy documentation
-          cp js/README.md release-package/
-          cp LICENSE release-package/
-          
-          # Create package info
-          echo "Sunbird Telemetry SDK" > release-package/VERSION.txt
-          echo "Tag: ${{ github.ref_name }}" >> release-package/VERSION.txt
-          echo "Commit: ${{ github.sha }}" >> release-package/VERSION.txt
-          echo "Build Date: $(date -u)" >> release-package/VERSION.txt
-          
-          # Create tarball for release
-          tar -czf sunbird-telemetry-sdk-${{ github.ref_name }}.tar.gz -C release-package .
-
-      # Step 4: Create GitHub release
-      # Upload the release package to GitHub releases
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            sunbird-telemetry-sdk-${{ github.ref_name }}.tar.gz
-            js/dist/index.js
-          body: |
-            ## Sunbird Telemetry SDK Release ${{ github.ref_name }}
-            
-            ### What's included:
-            - `index.js` - Bundled Telemetry SDK ready for use
-            - `package.json` - Package metadata
-            - `README.md` - Documentation
-            
-            ### Usage:
-            1. Download `index.js`
-            2. Include it in your web application
-            3. Follow the documentation in README.md
-            
-            ### Changes:
-            Built from commit: ${{ github.sha }}
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Optional: Build and push Docker image
-  # Uncomment and configure this job if you want to create a Docker image
+  # Build and push Docker image
   build-and-push-docker:
     needs: build-and-test-sdk
     runs-on: ubuntu-latest
@@ -305,4 +148,4 @@ jobs:
       - name: Push Docker Image
         run: |
           docker push ${REGISTRY_URL}:${IMAGE_TAG}
-          echo "Successfully built and pushed Docker image: ${REGISTRY_URL}:${IMAGE_TAG}" 
+          echo "Successfully built and pushed Docker image: ${REGISTRY_URL}:${IMAGE_TAG}"
