@@ -4,7 +4,7 @@ name: Build and Release Telemetry SDK
 on:
   push:
     #tags:
-     # - '*'
+      #- '*'
     
 jobs:
   # First job: Build and test the SDK
@@ -56,6 +56,10 @@ jobs:
         run: |
           # Try multiple approaches to fix PhantomJS OpenSSL issues
           echo "Attempting to fix PhantomJS OpenSSL compatibility..."
+          
+          # Check Ubuntu version
+          UBUNTU_VERSION=$(lsb_release -rs)
+          echo "Running on Ubuntu $UBUNTU_VERSION"
           
           # Method 1: Try to install libssl1.1 from Ubuntu repositories
           sudo apt-get update
@@ -112,10 +116,38 @@ jobs:
           ls -la /usr/lib/x86_64-linux-gnu/libssl* || echo "No libssl found"
           ls -la /usr/lib/x86_64-linux-gnu/libcrypto* || echo "No libcrypto found"
 
-      - name: Run tests with PhantomJS
-        run: npm test
+      # Step 7: Try PhantomJS first, fallback to Chrome if it fails
+      - name: Run tests with PhantomJS (with fallback)
+        run: |
+          # Try PhantomJS first
+          echo "Attempting to run tests with PhantomJS..."
+          if npm test; then
+            echo "PhantomJS tests completed successfully!"
+          else
+            echo "PhantomJS failed, trying Chrome Headless as fallback..."
+            
+            # Install Chrome
+            sudo apt-get update
+            sudo apt-get install -y google-chrome-stable
+            
+            # Temporarily modify Karma config to use Chrome
+            cp karma.renderer.config.js karma.renderer.config.js.backup
+            sed -i 's/"karma-phantomjs-launcher"/"karma-chrome-launcher"/g' karma.renderer.config.js
+            sed -i 's/'\''PhantomJS'\''/'\''ChromeHeadless'\''/g' karma.renderer.config.js
+            
+            # Run tests with Chrome
+            if npm test; then
+              echo "Chrome Headless tests completed successfully!"
+            else
+              echo "Both PhantomJS and Chrome failed!"
+              exit 1
+            fi
+            
+            # Restore original config
+            mv karma.renderer.config.js.backup karma.renderer.config.js
+          fi
 
-      # Step 7: Upload built SDK as artifact
+      # Step 8: Upload built SDK as artifact
       # This makes the built SDK available for the Docker job
       - name: Upload SDK build artifacts
         uses: actions/upload-artifact@v4.6.2
@@ -124,7 +156,7 @@ jobs:
           path: js/dist/
           retention-days: 7
 
-      # Step 8: Upload npm dependencies as artifact for potential reuse
+      # Step 9: Upload npm dependencies as artifact for potential reuse
       - name: Upload node_modules
         uses: actions/upload-artifact@v4.6.2
         with:
