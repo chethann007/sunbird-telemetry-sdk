@@ -4,7 +4,7 @@ name: Build and Release Telemetry SDK
 on:
   push:
     #tags:
-      #- '*'
+     # - '*'
     
 jobs:
   # First job: Build and test the SDK
@@ -130,16 +130,28 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y google-chrome-stable
             
+            # Ensure karma-chrome-launcher is available
+            echo "Installing karma-chrome-launcher..."
+            npm install karma-chrome-launcher --save-dev
+            
             # Temporarily modify Karma config to use Chrome
             cp karma.renderer.config.js karma.renderer.config.js.backup
+            
+            # Update plugins array to include chrome launcher
             sed -i 's/"karma-phantomjs-launcher"/"karma-chrome-launcher"/g' karma.renderer.config.js
             sed -i 's/'\''PhantomJS'\''/'\''ChromeHeadless'\''/g' karma.renderer.config.js
+            
+            # Verify the changes
+            echo "Updated Karma config:"
+            grep -A 5 -B 5 "plugins\|browsers" karma.renderer.config.js
             
             # Run tests with Chrome
             if npm test; then
               echo "Chrome Headless tests completed successfully!"
             else
               echo "Both PhantomJS and Chrome failed!"
+              echo "Restoring original config and exiting..."
+              mv karma.renderer.config.js.backup karma.renderer.config.js
               exit 1
             fi
             
